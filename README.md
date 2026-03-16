@@ -1,5 +1,11 @@
 # pinentry-zellij
 
+[![crates.io](https://img.shields.io/crates/v/pinentry-zellij.svg)](https://crates.io/crates/pinentry-zellij)
+[![CI](https://github.com/likewhatevs/pinentry-zellij/actions/workflows/ci.yml/badge.svg)](https://github.com/likewhatevs/pinentry-zellij/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/likewhatevs/pinentry-zellij/graph/badge.svg?token=1U5WTFQBXN)](https://codecov.io/gh/likewhatevs/pinentry-zellij)
+
+[![asciicast](https://asciinema.org/a/wX8LzbAIEvXOYctF.svg)](https://asciinema.org/a/wX8LzbAIEvXOYctF)
+
 Pinentry for [Zellij](https://zellij.dev). Floating dialog inside Zellij, TTY fallback outside. Works as `SSH_ASKPASS` and `SUDO_ASKPASS` too.
 
 ## How it works
@@ -15,6 +21,12 @@ The plugin is auto-installed to `~/.config/zellij/plugins/` on first use.
 - Optional: [binaryen](https://github.com/WebAssembly/binaryen) for `wasm-opt`
 
 ## Install
+
+```sh
+cargo install pinentry-zellij
+```
+
+Or build from source:
 
 ```sh
 cargo build --release -p pinentry-zellij

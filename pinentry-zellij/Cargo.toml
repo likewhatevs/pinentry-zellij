@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 dirs = "6"
-pinentry-zellij-protocol = { path = "../pinentry-zellij-protocol" }
+pinentry-zellij-protocol = { version = "0.1.0", path = "../pinentry-zellij-protocol" }
 rpassword = "7"
 serde_json = "1"
 tempfile = "3"
