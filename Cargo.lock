@@ -2107,9 +2107,10 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pinentry-zellij"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dirs",
+ "pinentry-zellij-plugin",
  "pinentry-zellij-protocol",
  "proptest",
  "rpassword",
@@ -2126,7 +2127,7 @@ dependencies = [
 
 [[package]]
 name = "pinentry-zellij-plugin"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arrayvec 0.7.6",
  "pinentry-zellij-protocol",
@@ -2139,7 +2140,7 @@ dependencies = [
 
 [[package]]
 name = "pinentry-zellij-protocol"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",

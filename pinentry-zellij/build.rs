@@ -4,60 +4,16 @@ use std::process::Command;
 use sha2::{Digest, Sha256};
 
 fn main() {
-    // Rebuild when plugin or protocol source changes
-    println!("cargo:rerun-if-changed=../pinentry-zellij-plugin/src/");
-    println!("cargo:rerun-if-changed=../pinentry-zellij-plugin/Cargo.toml");
-    println!("cargo:rerun-if-changed=../pinentry-zellij-plugin/.cargo/config.toml");
-    println!("cargo:rerun-if-changed=../pinentry-zellij-protocol/src/");
-    println!("cargo:rerun-if-changed=../pinentry-zellij-protocol/Cargo.toml");
+    // Cargo builds the plugin for wasm32-wasip1 via artifact dependency
+    // and provides the path through this env var.
+    let artifact = std::env::var("CARGO_BIN_FILE_PINENTRY_ZELLIJ_PLUGIN_pinentry-zellij-plugin")
+        .expect("CARGO_BIN_FILE_PINENTRY_ZELLIJ_PLUGIN_pinentry-zellij-plugin not set");
 
-    // Use a separate target-dir to avoid Cargo lock contention with the
-    // outer build (both builds run concurrently under the workspace lock).
-    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
-    let wasm_target_dir = PathBuf::from(&out_dir).join("wasm-target");
-
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
-    let plugin_manifest = PathBuf::from(&manifest_dir)
-        .parent()
-        .expect("cannot find workspace root")
-        .join("pinentry-zellij-plugin")
-        .join("Cargo.toml");
-
-    let status = Command::new("cargo")
-        .args([
-            "build",
-            "--release",
-            "--target",
-            "wasm32-wasip1",
-            "--target-dir",
-        ])
-        .arg(&wasm_target_dir)
-        .arg("--manifest-path")
-        .arg(&plugin_manifest)
-        .arg("-q")
-        // Prevent the outer cargo's flags/wrappers from leaking into the
-        // wasm build. CARGO_ENCODED_RUSTFLAGS carries host link args (e.g.
-        // -fuse-ld=mold), RUSTC_WRAPPER may point to coverage/sccache
-        // wrappers that inject flags incompatible with wasm.
-        .env_remove("CARGO_ENCODED_RUSTFLAGS")
-        .env_remove("RUSTFLAGS")
-        .env_remove("RUSTC_WRAPPER")
-        .env_remove("RUSTC_WORKSPACE_WRAPPER")
-        .status()
-        .expect("failed to run cargo build for wasm plugin");
-
-    assert!(status.success(), "wasm plugin build failed");
-
-    let wasm_path = wasm_target_dir
-        .join("wasm32-wasip1")
-        .join("release")
-        .join("pinentry-zellij-plugin.wasm");
-
-    assert!(
-        wasm_path.exists(),
-        "wasm not found at {}",
-        wasm_path.display()
-    );
+    // Copy to OUT_DIR so wasm-opt can modify it in place without touching
+    // cargo's artifact output.
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR not set"));
+    let wasm_path = out_dir.join("pinentry-zellij-plugin.wasm");
+    std::fs::copy(&artifact, &wasm_path).expect("failed to copy wasm artifact");
 
     // Optimize wasm with wasm-opt in release builds only.
     // Flags tuned for wasmi (interpreter, no SIMD, no threads).
