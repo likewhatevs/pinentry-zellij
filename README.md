@@ -23,13 +23,13 @@ The plugin is auto-installed to `~/.config/zellij/plugins/` on first use.
 ## Install
 
 ```sh
-cargo install pinentry-zellij
+cargo +nightly -Z bindeps install pinentry-zellij
 ```
 
 Or build from source:
 
 ```sh
-cargo build --release -p pinentry-zellij
+cargo +nightly build --release -p pinentry-zellij
 cp target/release/pinentry-zellij ~/.local/bin/
 ```
 
