@@ -1,0 +1,13 @@
+[package]
+name = "pinentry-zellij-protocol"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-2.0"
+description = "Shared protocol types for pinentry-zellij"
+repository = "https://github.com/likewhatevs/pinentry-zellij"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"
