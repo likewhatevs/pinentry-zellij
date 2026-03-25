@@ -1,6 +1,7 @@
 //! Handler dispatch: routes pinentry requests to Zellij plugin or TTY fallback.
 
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
 use zeroize::Zeroize;
 
@@ -34,16 +35,26 @@ fn try_zellij(state: &PinentryState) -> Option<HandlerResult> {
     // Single command: zellij pipe --plugin launches the plugin as a floating
     // pane if not running, sends the request, and blocks until the plugin
     // responds via cli_pipe_output + unblock_cli_pipe_input.
-    let pipe_args = zellij::build_pipe_args(&request, &plugin);
+    let pipe_args = zellij::build_pipe_args(&plugin);
+    let mut payload = serde_json::to_string(&request).expect("serialize request");
+
     tracing::debug!("running zellij pipe");
-    // stdin is inherited (not null) because zellij pipe's client checks
-    // is_terminal() on stdin. With /dev/null it thinks stdin is piped,
-    // reads EOF, and exits before the plugin can respond.
-    // In Assuan mode, stdin is gpg-agent's pipe (not a terminal), so
-    // the pipe client sees is_piped=true, reads EOF, sends one empty
-    // message, then enters the response loop. The payload was in argv
-    // so no protocol bytes are stolen.
-    let output = Command::new("zellij").args(&pipe_args).output().ok()?;
+
+    // Pipe the JSON payload via stdin rather than as a positional arg.
+    // Command::output() sets stdin to null, and zellij pipe prioritizes
+    // stdin over argv when it detects piped input (!is_terminal). Sending
+    // the payload through stdin works in both interactive mode (terminal
+    // parent stdin) and assuan mode (gpg-agent pipe parent stdin) without
+    // stealing bytes from the parent's stdin.
+    let child = Command::new("zellij")
+        .args(&pipe_args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+
+    let output = pipe_payload_and_collect(child, &mut payload)?;
 
     tracing::debug!(
         "zellij pipe exited: status={}, stdout_len={}",
@@ -62,6 +73,28 @@ fn try_zellij(state: &PinentryState) -> Option<HandlerResult> {
     stdout.zeroize();
 
     Some(response_to_handler_result(&request, response))
+}
+
+/// Write `payload` to the child's stdin, close the pipe, and collect output.
+///
+/// Zeroizes `payload` regardless of outcome. On write failure, reaps the
+/// child before returning `None`.
+fn pipe_payload_and_collect(
+    mut child: std::process::Child,
+    payload: &mut String,
+) -> Option<std::process::Output> {
+    let write_ok = match child.stdin.take() {
+        Some(mut stdin) => stdin.write_all(payload.as_bytes()).is_ok(),
+        None => false,
+    };
+    payload.zeroize();
+
+    if !write_ok {
+        let _ = child.wait();
+        return None;
+    }
+
+    child.wait_with_output().ok()
 }
 
 /// Convert a plugin response into a handler result.
@@ -223,5 +256,84 @@ mod tests {
         };
         let result = response_to_handler_result(&req, resp);
         assert!(matches!(result, HandlerResult::Confirmed));
+    }
+
+    #[test]
+    fn pipe_payload_echoed_back() {
+        let child = Command::new("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut payload = "hello world".to_string();
+        let output = pipe_payload_and_collect(child, &mut payload).unwrap();
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "hello world");
+        assert!(output.status.success());
+    }
+
+    #[test]
+    fn pipe_payload_zeroizes() {
+        let child = Command::new("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut payload = "sensitive data".to_string();
+        let _ = pipe_payload_and_collect(child, &mut payload);
+        assert!(payload.bytes().all(|b| b == 0));
+    }
+
+    #[test]
+    fn pipe_payload_json_roundtrip() {
+        let req = PinentryRequest {
+            cmd: PinentryCmd::GetPin,
+            title: Some("Title".into()),
+            desc: Some("Enter passphrase".into()),
+            prompt: Some("PIN:".into()),
+            error: None,
+            ok: None,
+            cancel: None,
+            notok: None,
+            repeat: None,
+            repeat_error: None,
+        };
+        let child = Command::new("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut payload = serde_json::to_string(&req).unwrap();
+        let output = pipe_payload_and_collect(child, &mut payload).unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let parsed: PinentryRequest = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(parsed.cmd, PinentryCmd::GetPin);
+        assert_eq!(parsed.title.as_deref(), Some("Title"));
+        assert_eq!(parsed.desc.as_deref(), Some("Enter passphrase"));
+        assert_eq!(parsed.prompt.as_deref(), Some("PIN:"));
+    }
+
+    #[test]
+    fn pipe_payload_write_to_exited_process() {
+        // Spawn a process that exits immediately, then write to the closed pipe.
+        let mut child = Command::new("true")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        // Save stdin handle before wait() drops it.
+        let stdin_handle = child.stdin.take();
+        let _ = child.wait();
+        // Restore stdin — the read end is closed since the child exited,
+        // so write_all will get EPIPE.
+        child.stdin = stdin_handle;
+        let mut payload = "data".to_string();
+        let result = pipe_payload_and_collect(child, &mut payload);
+        assert!(result.is_none());
+        // Payload is zeroized even on write failure.
+        assert!(payload.bytes().all(|b| b == 0));
     }
 }

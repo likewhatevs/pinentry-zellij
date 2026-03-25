@@ -4,7 +4,7 @@
 //! from the plugin. The plugin path is determined from the
 //! `PINENTRY_ZELLIJ_PLUGIN` environment variable or a default location.
 
-use crate::protocol::{PinResponse, PinentryRequest};
+use crate::protocol::PinResponse;
 
 const DEFAULT_PLUGIN_DIR: &str = ".config/zellij/plugins";
 const PLUGIN_FILENAME: &str = "pinentry-zellij-plugin.wasm";
@@ -35,16 +35,15 @@ pub fn plugin_path() -> String {
 ///
 /// When `plugin` is provided, uses `--plugin` to target that specific
 /// plugin (avoids broadcast which causes other plugins to unblock the pipe).
-pub fn build_pipe_args(request: &PinentryRequest, plugin: &str) -> Vec<String> {
-    let payload = serde_json::to_string(request).expect("serialize request");
+/// The request payload is NOT included in args — it must be piped via stdin
+/// so that `zellij pipe` receives it regardless of the parent's stdin state.
+pub fn build_pipe_args(plugin: &str) -> Vec<String> {
     vec![
         "pipe".into(),
         "--plugin".into(),
         plugin.into(),
         "--name".into(),
         "pinentry".into(),
-        "--".into(),
-        payload,
     ]
 }
 
@@ -65,30 +64,17 @@ pub fn in_zellij() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{PinStatus, PinentryCmd};
+    use crate::protocol::PinStatus;
 
     #[test]
     fn build_pipe_args_structure() {
-        let req = PinentryRequest {
-            cmd: PinentryCmd::GetPin,
-            title: None,
-            desc: Some("Enter passphrase".into()),
-            prompt: Some("PIN:".into()),
-            error: None,
-            ok: None,
-            cancel: None,
-            notok: None,
-            repeat: None,
-            repeat_error: None,
-        };
-        let args = build_pipe_args(&req, "file:/path/to/plugin.wasm");
+        let args = build_pipe_args("file:/path/to/plugin.wasm");
         assert_eq!(args[0], "pipe");
         assert_eq!(args[1], "--plugin");
         assert_eq!(args[2], "file:/path/to/plugin.wasm");
         assert_eq!(args[3], "--name");
         assert_eq!(args[4], "pinentry");
-        assert_eq!(args[5], "--");
-        let _: PinentryRequest = serde_json::from_str(&args[6]).unwrap();
+        assert_eq!(args.len(), 5);
     }
 
     #[test]
