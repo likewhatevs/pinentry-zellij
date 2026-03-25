@@ -1,6 +1,6 @@
 [package]
 name = "pinentry-zellij-plugin"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 license = "GPL-2.0"
 description = "Zellij plugin for pinentry-zellij"
@@ -15,9 +15,9 @@ path = "src/main.rs"
 
 [dependencies]
 arrayvec = { version = "0.7", default-features = false }
-pinentry-zellij-protocol = { version = "0.3.0", path = "../pinentry-zellij-protocol" }
+pinentry-zellij-protocol = { version = "0.4.0", path = "../pinentry-zellij-protocol" }
 ratatui-core = { version = "0.1", default-features = false }
 ratatui-widgets = { version = "0.3", default-features = false }
 serde_json = "1"
-zellij-tile = "0.43"
+zellij-tile = "0.44"
 zeroize = "1"

@@ -87,8 +87,64 @@ pub fn ensure_plugin(target: &Path) -> Result<(), EmbedError> {
         warn!("could not set xattr on {}: {e}", target.display());
     }
 
+    // Clear zellij's compiled wasm cache so the new plugin is loaded
+    // instead of a stale cached version from a previous build.
+    clear_plugin_cache(target);
+
     debug!("installed plugin to {}", target.display());
     Ok(())
+}
+
+/// Remove zellij's compiled wasm cache for a plugin path.
+///
+/// Zellij caches compiled plugins under `~/.cache/zellij/` using `file:`
+/// URL paths as directory names. The cache key is the plugin's filename
+/// (e.g. `pinentry-zellij-plugin.wasm`). We walk the cache tree and
+/// remove any directory whose name matches the plugin filename.
+///
+/// The walk is bounded to depth `max_depth` to avoid traversing the
+/// entire cache tree. The cache structure is:
+///   `file:/<path>/<plugin>.wasm/`        (depth varies by path)
+///   `<session-uuid>/file:/<path>/<plugin>.wasm/`
+fn clear_plugin_cache(plugin_path: &Path) {
+    let Some(cache_dir) = dirs::cache_dir() else {
+        return;
+    };
+    let Some(filename) = plugin_path.file_name() else {
+        return;
+    };
+    let zellij_cache = cache_dir.join("zellij");
+
+    // Depth is bounded to the plugin path depth + 2 (for `file:` prefix
+    // and one session-UUID level). This avoids unbounded recursion while
+    // covering both top-level and per-session cache entries.
+    let path_depth = plugin_path.components().count() + 2;
+    walk_and_remove(&zellij_cache, filename, path_depth);
+}
+
+fn walk_and_remove(dir: &Path, target: &std::ffi::OsStr, remaining: usize) {
+    if remaining == 0 {
+        return;
+    }
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if path.file_name() == Some(target) {
+            if let Err(e) = fs::remove_dir_all(&path) {
+                warn!("could not clear plugin cache at {}: {e}", path.display());
+            } else {
+                debug!("cleared plugin cache at {}", path.display());
+            }
+        } else {
+            walk_and_remove(&path, target, remaining - 1);
+        }
+    }
 }
 
 /// Build a KDL permissions entry for the given plugin path.
@@ -316,5 +372,46 @@ mod tests {
         // Different plugin should not match.
         let other = "some_other_plugin {}".to_string();
         assert!(!other.contains(&key));
+    }
+
+    #[test]
+    fn clear_plugin_cache_removes_matching_dirs() {
+        let dir = tmpdir();
+        let zellij_cache = dir.join("zellij");
+
+        // Simulate zellij cache structure under dir/zellij/:
+        // zellij/file:/home/plugin.wasm/plugin_cache
+        // zellij/uuid-123/file:/home/plugin.wasm/plugin_cache
+        // zellij/file:/home/other.wasm/plugin_cache (should NOT be removed)
+        let target_name = "pinentry-zellij-plugin.wasm";
+        let other_name = "other-plugin.wasm";
+
+        let direct = zellij_cache.join("file:").join("home").join(target_name);
+        fs::create_dir_all(direct.join("plugin_cache")).unwrap();
+
+        let session = zellij_cache
+            .join("uuid-123")
+            .join("file:")
+            .join("home")
+            .join(target_name);
+        fs::create_dir_all(session.join("plugin_cache")).unwrap();
+
+        let other = zellij_cache.join("file:").join("home").join(other_name);
+        fs::create_dir_all(other.join("plugin_cache")).unwrap();
+
+        // Call the real function with a fake plugin path whose filename
+        // matches target_name. Override cache dir via temp env.
+        let plugin_path = Path::new("/home").join(target_name);
+        temp_env::with_var("XDG_CACHE_HOME", Some(dir.to_str().unwrap()), || {
+            clear_plugin_cache(&plugin_path);
+        });
+
+        // Target dirs removed
+        assert!(!direct.exists());
+        assert!(!session.exists());
+        // Other plugin untouched
+        assert!(other.exists());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

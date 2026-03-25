@@ -31,16 +31,11 @@ const FRAME_PAD: u16 = 4;
 pub fn dialog_dimensions(request: &PinentryRequest, term_cols: u16, term_rows: u16) -> (u16, u16) {
     let area = Rect::new(0, 0, 200, 200);
     let content_w = dialog_width(request, area);
-    // Use 60% of terminal width, but at least the content minimum
-    let target_w = ((term_cols as u32 * 60 / 100) as u16).max(content_w);
-    // Pane width = dialog + zellij frame (2 cols)
-    let pane_w = target_w + 2;
-    // Inner width available for text after both frames:
-    // pane_w - 2 (zellij frame) - FRAME_PAD (our border+padding)
-    let text_w = pane_w.saturating_sub(2 + FRAME_PAD);
-    let dialog_h = dialog_height(request, text_w);
-    // Pane height = dialog + zellij frame (2 rows)
-    let pane_h = (dialog_h + 2).min(term_rows);
+    // Use 60% of terminal width, but at least the content minimum.
+    // Pane is borderless so pane size = dialog size (no zellij frame).
+    let pane_w = ((term_cols as u32 * 60 / 100) as u16).max(content_w);
+    let text_w = pane_w.saturating_sub(FRAME_PAD);
+    let pane_h = dialog_height(request, text_w).min(term_rows);
     (pane_w.min(term_cols), pane_h)
 }
 
@@ -241,7 +236,7 @@ fn render_to_buffer(buf: &mut Buffer, request: &PinentryRequest, input: &str) {
         let filled = input.len().min(field_width);
         let remaining = field_width.saturating_sub(filled);
 
-        let input_line = Line::from_iter([
+        let mut spans = vec![
             Span::styled(
                 prompt,
                 Style::default()
@@ -255,8 +250,15 @@ fn render_to_buffer(buf: &mut Buffer, request: &PinentryRequest, input: &str) {
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("_".repeat(remaining), Style::default().fg(Color::DarkGray)),
-        ]);
+        ];
+        spans.push(Span::styled("▎", Style::default().fg(Color::White)));
+        if remaining > 0 {
+            spans.push(Span::styled(
+                "_".repeat(remaining),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+        let input_line = Line::from_iter(spans);
         Paragraph::new(input_line).render(chunks[row], buf);
         row += 1; // past input
         row += 1; // spacer
@@ -482,6 +484,39 @@ mod tests {
         let confirm = make_request(PinentryCmd::Confirm);
         let area = Rect::new(0, 0, 120, 40);
         assert!(dialog_width(&confirm, area) < dialog_width(&getpin, area));
+    }
+
+    #[test]
+    fn render_cursor_at_input_position() {
+        let request = make_request(PinentryCmd::GetPin);
+        let content = render_to_string(&request, "ab");
+        // Cursor appears right after masked input
+        assert!(content.contains("**▎"));
+    }
+
+    #[test]
+    fn render_cursor_at_start_when_empty() {
+        let request = make_request(PinentryCmd::GetPin);
+        let content = render_to_string(&request, "");
+        // Cursor at start of input field (after "PIN: ")
+        assert!(content.contains("PIN: ▎"));
+    }
+
+    #[test]
+    fn render_confirm_no_cursor() {
+        let request = make_request(PinentryCmd::Confirm);
+        let content = render_to_string(&request, "");
+        assert!(!content.contains("▎"));
+    }
+
+    #[test]
+    fn dialog_dimensions_borderless() {
+        let request = make_request(PinentryCmd::GetPin);
+        let (w, h) = dialog_dimensions(&request, 200, 50);
+        // 60% of 200 = 120, content min ~49, so width = 120
+        assert_eq!(w, 120);
+        // Height: 2 border + 1 desc + 4 (spacer+input+spacer+hints) = 7
+        assert_eq!(h, 7);
     }
 
     fn buffer_to_string(buf: &Buffer) -> String {
