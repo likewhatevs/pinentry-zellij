@@ -35,7 +35,7 @@ fn try_zellij(state: &PinentryState) -> Option<HandlerResult> {
     // Single command: zellij pipe --plugin launches the plugin as a floating
     // pane if not running, sends the request, and blocks until the plugin
     // responds via cli_pipe_output + unblock_cli_pipe_input.
-    let pipe_args = zellij::build_pipe_args(&plugin);
+    let pipe_args = zellij::build_pipe_args(&plugin, zellij::terminal_size());
     let mut payload = serde_json::to_string(&request).expect("serialize request");
 
     tracing::debug!("running zellij pipe");
