@@ -62,7 +62,7 @@ fn dialog_width(request: &PinentryRequest, area: Rect) -> u16 {
 
     // PIN field width (GetPin only)
     if request.cmd == PinentryCmd::GetPin {
-        let prompt_len = request.prompt.as_deref().unwrap_or("PIN:").len() as u16;
+        let prompt_len = request.prompt.as_deref().unwrap_or("Passphrase:").len() as u16;
         w = prompt_len + 1 + MIN_PIN_LENGTH + FRAME_PAD;
     }
 
@@ -231,7 +231,7 @@ fn render_to_buffer(buf: &mut Buffer, request: &PinentryRequest, input: &str) {
 
     if request.cmd == PinentryCmd::GetPin {
         // Masked input with underscores for empty positions (like pinentry-curses)
-        let prompt = request.prompt.as_deref().unwrap_or("PIN:");
+        let prompt = request.prompt.as_deref().unwrap_or("Passphrase:");
         let field_width = chunks[row].width.saturating_sub(prompt.len() as u16 + 2) as usize;
         let filled = input.len().min(field_width);
         let remaining = field_width.saturating_sub(filled);
@@ -409,7 +409,7 @@ mod tests {
         let mut request = make_request(PinentryCmd::GetPin);
         request.prompt = None;
         let content = render_to_string(&request, "ab");
-        assert!(content.contains("PIN:"));
+        assert!(content.contains("Passphrase:"));
         assert!(content.contains("**"));
     }
 
