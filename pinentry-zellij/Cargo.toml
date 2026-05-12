@@ -1,6 +1,6 @@
 [package]
 name = "pinentry-zellij"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 license = "GPL-2.0"
 description = "Pinentry program for Zellij"
@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 dirs = "6"
-pinentry-zellij-protocol = { version = "0.4.0", path = "../pinentry-zellij-protocol" }
+pinentry-zellij-protocol = { version = "0.4.1", path = "../pinentry-zellij-protocol" }
 rpassword = "7"
 serde_json = "1"
 tempfile = "3"
@@ -26,7 +26,7 @@ xattr = "1"
 zeroize = "1"
 
 [build-dependencies]
-pinentry-zellij-plugin = { version = "0.4.0", path = "../pinentry-zellij-plugin", artifact = "bin", target = "wasm32-wasip1" }
+pinentry-zellij-plugin = { version = "0.4.1", path = "../pinentry-zellij-plugin", artifact = "bin", target = "wasm32-wasip1" }
 sha2 = "0.10"
 
 [dev-dependencies]

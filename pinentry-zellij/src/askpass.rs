@@ -28,7 +28,7 @@ pub fn run(prompt: &str) -> ExitCode {
 
     if let Some(passphrase) = output {
         // Print by reference — the Zeroizing wrapper zeroizes on drop.
-        println!("{}", &*passphrase);
+        println!("{}", *passphrase);
     }
 
     code
