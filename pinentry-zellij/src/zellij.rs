@@ -37,37 +37,14 @@ pub fn plugin_path() -> String {
 /// plugin (avoids broadcast which causes other plugins to unblock the pipe).
 /// The request payload is NOT included in args — it must be piped via stdin
 /// so that `zellij pipe` receives it regardless of the parent's stdin state.
-pub fn build_pipe_args(plugin: &str, term_size: Option<(u16, u16)>) -> Vec<String> {
-    let mut args = vec![
+pub fn build_pipe_args(plugin: &str) -> Vec<String> {
+    vec![
         "pipe".into(),
         "--plugin".into(),
         plugin.into(),
         "--name".into(),
         "pinentry".into(),
-    ];
-
-    if let Some((cols, rows)) = term_size {
-        args.push("--plugin-configuration".into());
-        args.push(format!("term_cols={cols} term_rows={rows}"));
-    }
-
-    args
-}
-
-/// Query terminal dimensions via /dev/tty.
-///
-/// Opens /dev/tty directly so this works even when stdin/stdout are pipes
-/// (assuan mode). Returns `None` if the tty cannot be opened or queried.
-pub fn terminal_size() -> Option<(u16, u16)> {
-    use std::os::unix::io::AsRawFd;
-    let tty = std::fs::File::open("/dev/tty").ok()?;
-    let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
-    let ret = unsafe { libc::ioctl(tty.as_raw_fd(), libc::TIOCGWINSZ, &mut ws) };
-    if ret == 0 && ws.ws_col > 0 && ws.ws_row > 0 {
-        Some((ws.ws_col, ws.ws_row))
-    } else {
-        None
-    }
+    ]
 }
 
 /// Parse the stdout of `zellij pipe` into a PinResponse.
@@ -90,22 +67,18 @@ mod tests {
     use crate::protocol::PinStatus;
 
     #[test]
-    fn build_pipe_args_no_term_size() {
-        let args = build_pipe_args("file:/path/to/plugin.wasm", None);
-        assert_eq!(args[0], "pipe");
-        assert_eq!(args[1], "--plugin");
-        assert_eq!(args[2], "file:/path/to/plugin.wasm");
-        assert_eq!(args[3], "--name");
-        assert_eq!(args[4], "pinentry");
-        assert_eq!(args.len(), 5);
-    }
-
-    #[test]
-    fn build_pipe_args_with_term_size() {
-        let args = build_pipe_args("file:/path/to/plugin.wasm", Some((120, 40)));
-        assert_eq!(args.len(), 7);
-        assert_eq!(args[5], "--plugin-configuration");
-        assert_eq!(args[6], "term_cols=120 term_rows=40");
+    fn build_pipe_args_basic() {
+        let args = build_pipe_args("file:/path/to/plugin.wasm");
+        assert_eq!(
+            args,
+            vec![
+                "pipe",
+                "--plugin",
+                "file:/path/to/plugin.wasm",
+                "--name",
+                "pinentry",
+            ]
+        );
     }
 
     #[test]

@@ -4,14 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
-  schedule:
-    - cron: '0 6 * * *'
 
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
         with:
           targets: wasm32-wasip1
@@ -24,7 +22,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
         with:
           targets: wasm32-wasip1
@@ -41,7 +39,7 @@ jobs:
         run: cargo nextest run -p pinentry-zellij
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov-protocol.info,lcov-plugin.info

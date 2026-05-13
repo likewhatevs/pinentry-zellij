@@ -27,7 +27,13 @@ impl TtyIo for RealTtyIo {
     }
 
     fn read_password(&mut self, prompt: &str) -> Option<String> {
-        rpassword::prompt_password(prompt).ok()
+        // 7.5 ConfigBuilder gives us per-keystroke '*' feedback, matching the
+        // in-Zellij dialog. prompt_password_with_config writes the prompt to
+        // the TTY then reads, same channel rpassword already used.
+        let config = rpassword::ConfigBuilder::new()
+            .password_feedback_mask('*')
+            .build();
+        rpassword::prompt_password_with_config(prompt, config).ok()
     }
 
     fn read_line(&mut self, prompt: &str) -> Option<String> {
@@ -56,7 +62,7 @@ fn handle_getpin(state: &PinentryState, io: &mut dyn TtyIo) -> HandlerResult {
         io.write_stderr(&format!("*** {error} ***\n"));
     }
 
-    let prompt = state.prompt.as_deref().unwrap_or("PIN:");
+    let prompt = state.prompt.as_deref().unwrap_or("Passphrase:");
     let prompt = format_prompt(prompt);
 
     let Some(passphrase) = io.read_password(&prompt).map(zeroize::Zeroizing::new) else {

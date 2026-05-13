@@ -20,31 +20,40 @@ struct PinentryPlugin {
     pipe_id: Option<String>,
     input: String,
     done: bool,
-    moved_to_tab: bool,
+    /// Set once a TabUpdate has sized + focused the pane using full-tab
+    /// display_area dims. Cleared on each new pipe() so the next TabUpdate
+    /// re-runs setup. The pane stays hidden until this is true, so the
+    /// user only ever sees the dialog at its final size.
+    sized_for_tab: bool,
     /// Expected inner width after resize (borderless: pane width = inner width).
     /// render() skips until cols matches, preventing a flash at wrong size.
     expected_cols: u16,
-    terminal_cols: u16,
-    terminal_rows: u16,
+    /// Last seen full-tab display area dims from a TabUpdate. On reuse,
+    /// pipe() pre-applies coords from these cached dims while the pane
+    /// is still hidden, so the subsequent unhide shows the pane at the
+    /// right size in one step (rather than rendering at stale coords
+    /// first, then resizing once new coords land).
+    last_tab_dims: Option<(u16, u16)>,
 }
 
 register_plugin!(PinentryPlugin);
 
 impl ZellijPlugin for PinentryPlugin {
-    fn load(&mut self, configuration: BTreeMap<String, String>) {
+    fn load(&mut self, _configuration: BTreeMap<String, String>) {
         subscribe(&[EventType::Key, EventType::TabUpdate]);
         request_permission(&[
             PermissionType::ReadCliPipes,
             PermissionType::ReadApplicationState,
             PermissionType::ChangeApplicationState,
         ]);
-
-        if let Some(cols) = configuration.get("term_cols") {
-            self.terminal_cols = cols.parse().unwrap_or(0);
-        }
-        if let Some(rows) = configuration.get("term_rows") {
-            self.terminal_rows = rows.parse().unwrap_or(0);
-        }
+        // Suppress the pane on creation and remove its border up front,
+        // so even if zellij renders the pane before pipe()/TabUpdate set
+        // final coords, nothing is visible (and there's no outline flash
+        // if it briefly is).
+        let ids = get_plugin_ids();
+        let pane_id = PaneId::Plugin(ids.plugin_id);
+        set_pane_borderless(pane_id, true);
+        hide_pane_with_id(pane_id);
     }
 
     fn pipe(&mut self, pipe_message: PipeMessage) -> bool {
@@ -68,18 +77,27 @@ impl ZellijPlugin for PinentryPlugin {
             let pane_id = PaneId::Plugin(ids.plugin_id);
             rename_plugin_pane(ids.plugin_id, " ");
 
-            // Hide pane before moving/resizing to prevent a flash on
-            // the old tab when the instance is reused. Skip on first
-            // invocation (pane was just created on the current tab).
-            if self.done {
-                hide_pane_with_id(pane_id);
+            // Always hide and move the plugin pane to the user's currently
+            // focused tab. zellij does not guarantee the plugin lands on
+            // the user's tab when `zellij pipe --plugin` is invoked, and on
+            // subsequent calls the pane is on whatever tab it was last
+            // shown. Querying synchronously avoids the prior TabUpdate-wait
+            // dance that could hang or land on a stale snapshot.
+            hide_pane_with_id(pane_id);
+            if let Ok((tab_index, _)) = get_focused_pane_info() {
+                break_panes_to_tab_with_index(&[pane_id], tab_index, false);
             }
+            float_multiple_panes(vec![pane_id]);
 
-            // Fire-and-forget resize + center using host-provided dims.
-            if self.terminal_cols > 0 && self.terminal_rows > 0 {
-                let (w, h) = ui::dialog_dimensions(&req, self.terminal_cols, self.terminal_rows);
-                let x = self.terminal_cols.saturating_sub(w) / 2;
-                let y = self.terminal_rows.saturating_sub(h) / 2;
+            // If a previous TabUpdate gave us full-tab display_area dims,
+            // pre-apply the final coords now while the pane is still
+            // hidden — so when TabUpdate later focuses it, zellij doesn't
+            // briefly render the pane at a stale size before applying
+            // the new coords.
+            if let Some((tc, tr)) = self.last_tab_dims {
+                let (w, h) = ui::dialog_dimensions(&req, tc, tr);
+                let x = tc.saturating_sub(w) / 2;
+                let y = tr.saturating_sub(h) / 2;
                 if let Some(coords) = FloatingPaneCoordinates::new(
                     Some(format!("{x}")),
                     Some(format!("{y}")),
@@ -90,14 +108,11 @@ impl ZellijPlugin for PinentryPlugin {
                 ) {
                     change_floating_panes_coordinates(vec![(pane_id, coords)]);
                 }
-                // Borderless: pane inner cols = pane width (no frame).
                 self.expected_cols = w;
             }
 
-            // Don't focus here — the pane is still on the old tab.
-            // update(TabUpdate) will move, show, and focus it.
             self.request = Some(req);
-            self.moved_to_tab = false;
+            self.sized_for_tab = false;
             self.done = false;
             return true;
         }
@@ -114,36 +129,37 @@ impl ZellijPlugin for PinentryPlugin {
 
         match event {
             Event::TabUpdate(tab_infos) => {
-                if self.moved_to_tab {
+                let Some(active) = tab_infos.iter().find(|t| t.active) else {
+                    return false;
+                };
+                let tc = active.display_area_columns as u16;
+                let tr = active.display_area_rows as u16;
+                self.last_tab_dims = Some((tc, tr));
+
+                // First TabUpdate after a new pipe message: size + center +
+                // focus using full-tab display_area dims. Skipped on later
+                // TabUpdates so the user isn't disturbed mid-interaction.
+                if self.sized_for_tab {
                     return false;
                 }
-                if let Some(active) = tab_infos.iter().find(|t| t.active) {
-                    let ids = get_plugin_ids();
-                    let pane_id = PaneId::Plugin(ids.plugin_id);
-
-                    // Move to active tab, then float + resize + focus.
-                    break_panes_to_tab_with_index(&[pane_id], active.position, false);
-                    float_multiple_panes(vec![pane_id]);
-
-                    let tc = active.display_area_columns as u16;
-                    let tr = active.display_area_rows as u16;
-                    let (w, h) = ui::dialog_dimensions(request, tc, tr);
-                    let x = tc.saturating_sub(w) / 2;
-                    let y = tr.saturating_sub(h) / 2;
-                    if let Some(coords) = FloatingPaneCoordinates::new(
-                        Some(format!("{x}")),
-                        Some(format!("{y}")),
-                        Some(format!("{w}")),
-                        Some(format!("{h}")),
-                        None,
-                        Some(true),
-                    ) {
-                        change_floating_panes_coordinates(vec![(pane_id, coords)]);
-                    }
-                    self.expected_cols = w;
-                    focus_pane_with_id(pane_id, true, false);
-                    self.moved_to_tab = true;
+                let ids = get_plugin_ids();
+                let pane_id = PaneId::Plugin(ids.plugin_id);
+                let (w, h) = ui::dialog_dimensions(request, tc, tr);
+                let x = tc.saturating_sub(w) / 2;
+                let y = tr.saturating_sub(h) / 2;
+                if let Some(coords) = FloatingPaneCoordinates::new(
+                    Some(format!("{x}")),
+                    Some(format!("{y}")),
+                    Some(format!("{w}")),
+                    Some(format!("{h}")),
+                    None,
+                    Some(true),
+                ) {
+                    change_floating_panes_coordinates(vec![(pane_id, coords)]);
                 }
+                self.expected_cols = w;
+                focus_pane_with_id(pane_id, true, false);
+                self.sized_for_tab = true;
                 false
             }
             Event::Key(key) if key.bare_key == BareKey::Enter && key.key_modifiers.is_empty() => {
@@ -194,11 +210,8 @@ impl ZellijPlugin for PinentryPlugin {
             return;
         };
 
-        // Skip until update(TabUpdate) has moved/resized the pane, and
-        // the resize has been applied (cols matches expected width).
-        if !self.moved_to_tab {
-            return;
-        }
+        // Skip the first render after resize until cols matches what we
+        // asked for, preventing a flash at the wrong size.
         if self.expected_cols > 0 && cols != self.expected_cols as usize {
             return;
         }
@@ -224,6 +237,11 @@ impl PinentryPlugin {
         }
         self.input.zeroize();
         self.done = true;
-        close_self();
+        // Hide rather than close, so the plugin instance survives across
+        // pinentry calls. The next pipe message reuses this pane — only
+        // the very first pinentry invocation in a zellij session pays the
+        // cost of zellij creating a new plugin pane.
+        let ids = get_plugin_ids();
+        hide_pane_with_id(PaneId::Plugin(ids.plugin_id));
     }
 }

@@ -15,14 +15,20 @@ use crate::state::PinentryState;
 /// Run in askpass mode: prompt for a passphrase and print it to stdout.
 pub fn run(prompt: &str) -> ExitCode {
     let mut state = PinentryState::default();
-    state.desc = Some(prompt.to_string());
+    // The askpass arg is the description/context for the user (e.g.
+    // "Enter passphrase for '/path/to/key':"). Render it as the dialog
+    // body and let the field fall back to the generic "Passphrase:" label —
+    // matching pre-existing layout, just without the literal "PIN:".
+    if !prompt.is_empty() {
+        state.desc = Some(prompt.to_string());
+    }
     state.set_cmd_getpin();
 
     let (output, code) = result_to_output(handler::dispatch(&state));
 
     if let Some(passphrase) = output {
         // Print by reference — the Zeroizing wrapper zeroizes on drop.
-        println!("{}", &*passphrase);
+        println!("{}", *passphrase);
     }
 
     code
